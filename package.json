@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.98",
-    "ai": "^7.0.164",
+    "ai": "^7.0.165",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^5.1.0",
