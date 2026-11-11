@@ -24,14 +24,6 @@ services:
         sync: false
       - key: MFA_ENCRYPTION_KEY
         generateValue: true
-      - key: PAYPAL_CLIENT_ID
-        sync: false
-      - key: PAYPAL_CLIENT_SECRET
-        sync: false
-      - key: PAYPAL_WEBHOOK_ID
-        sync: false
-      - key: ANTHROPIC_API_KEY
-        sync: false
       - key: CLAUDE_MODEL
         value: claude-sonnet-5-5
       - key: PAYPAL_CURRENCY
