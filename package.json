@@ -16,7 +16,7 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^4.0.98",
+    "@ai-sdk/anthropic": "^4.0.99",
     "ai": "^7.0.164",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
