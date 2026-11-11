@@ -24,8 +24,8 @@ services:
         sync: false
       - key: MFA_ENCRYPTION_KEY
         generateValue: true
-      - key: CLAUDE_MODEL
-        value: claude-sonnet-5-5
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
       - key: PAYPAL_CURRENCY
         value: USD
 

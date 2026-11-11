@@ -6,8 +6,6 @@ import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { anthropic } from '@ai-sdk/anthropic';
-import { generateText } from 'ai';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { databaseConfigured, pool } from './db.js';
@@ -22,68 +20,69 @@ import { summarizeWebhookEvent, verifyPayPalWebhook } from './paypal-webhooks.js
 const app = express();
 const port = Number(process.env.PORT || 8787);
 const packageInfo = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-const claudeModel = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
-const claudeConfigured = Boolean(process.env.ANTHROPIC_API_KEY);
-let claudeStatus = {
-  state: claudeConfigured ? 'configured' : 'local-only',
+const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+const geminiApiKey = process.env.GEMINI_API_KEY || '';
+const geminiConfigured = Boolean(geminiApiKey);
+let geminiStatus = {
+  state: geminiConfigured ? 'configured' : 'local-only',
   checkedAt: null,
-  message: claudeConfigured ? 'Configured; run a connection check or diagnosis to confirm access.' : 'No API key configured; the local advisor is available.',
+  message: geminiConfigured ? 'Gemini API key is configured; run a connection check or diagnosis to confirm access.' : 'No Gemini API key configured; the local advisor is available.',
 };
-const getClaudeStatus = () => ({ ...claudeStatus, configured: claudeConfigured, model: claudeModel });
-function setClaudeStatus(state, message) {
-  claudeStatus = { state, checkedAt: new Date().toISOString(), message };
-  return getClaudeStatus();
-}
-function inspectClaudeError(error) {
-  const chain = [];
-  const pending = [error];
-  const visited = new Set();
-  while (pending.length && chain.length < 8) {
-    const current = pending.shift();
-    if (!current || (typeof current !== 'object' && typeof current !== 'function') || visited.has(current)) continue;
-    visited.add(current);
-    chain.push(current);
-    if (current.lastError) pending.push(current.lastError);
-    if (current.cause) pending.push(current.cause);
-    if (Array.isArray(current.errors)) pending.push(...current.errors.slice(-2));
-  }
-  const statusSource = chain.find((item) => Number(item.statusCode || item.status || item.response?.status || 0) > 0);
-  const status = Number(statusSource?.statusCode || statusSource?.status || statusSource?.response?.status || 0);
-  let providerMessage = '';
-  for (const item of chain) {
-    try {
-      const rawBody = item.responseBody ?? item.response?.body;
-      const body = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
-      const message = body?.error?.message || body?.message;
-      if (message) providerMessage += ` ${String(message).slice(0, 1000)}`;
-    } catch { /* Keep provider response details out of the dashboard and logs. */ }
-  }
-  return {
-    chain,
-    status,
-    providerMessage: providerMessage.toLowerCase(),
-    transportText: chain.map((item) => `${item.name || ''} ${item.message || ''}`).join(' '),
-    providerErrorName: chain.find((item) => item !== error && item.name)?.name || error?.name || 'Error',
-  };
+const getGeminiStatus = () => ({ ...geminiStatus, configured: geminiConfigured, model: geminiModel });
+function setGeminiStatus(state, message) {
+  geminiStatus = { state, checkedAt: new Date().toISOString(), message };
+  return getGeminiStatus();
 }
 
-function getClaudeFailureMessage(error) {
-  const { chain, status, providerMessage, transportText } = inspectClaudeError(error);
-  const insufficientCredits = /credit balance|credits? (are )?too low|purchase credits/.test(providerMessage);
-  const spendLimitReached = /usage limit|spend limit/.test(providerMessage);
-  const transportError = /timeout|abort|fetch failed|network|econn|enotfound|unable to connect/i.test(transportText);
-  if (insufficientCredits || status === 402) return 'The Anthropic API account has insufficient credits. Check API billing.';
-  if (spendLimitReached) return 'The Anthropic API usage limit has been reached. Check the organization or workspace limit.';
-  if (status === 401) return 'Anthropic rejected the API key. Check the server-side ANTHROPIC_API_KEY.';
-  if (status === 403) return 'This Anthropic key or account cannot use the configured model.';
-  if (status === 404) return `Anthropic could not find model “${claudeModel}”. Check CLAUDE_MODEL.`;
-  if (status === 429) return 'Anthropic rate or usage limits were reached.';
-  if (status >= 500) return 'Anthropic is temporarily unavailable.';
-  if (status === 400 && /model/.test(providerMessage)) return `Anthropic rejected model “${claudeModel}”. Check CLAUDE_MODEL and model access.`;
-  if (transportError) return 'The Claude request timed out or could not reach Anthropic. Check the API server network and retry.';
-  if (status === 400) return 'Anthropic rejected the request. Check its model and request settings.';
-  if (chain.some((item) => item?.name === 'AI_RetryError')) return 'Claude failed after a retry, but Anthropic returned no HTTP status. Check outbound access from the API server and the Anthropic API logs.';
-  return 'Claude could not complete the request. Check the API key, model, and network.';
+async function generateGeminiText({ system, prompt, maxOutputTokens = 700, timeoutMs = 20_000 }) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(geminiModel)}:generateContent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiApiKey },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: system }] },
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens, temperature: 0.2 },
+      }),
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(payload?.error?.message || `Gemini API returned HTTP ${response.status}.`);
+      error.statusCode = response.status;
+      error.providerMessage = String(payload?.error?.message || '');
+      throw error;
+    }
+    const text = (payload?.candidates?.[0]?.content?.parts || []).map((part) => part.text || '').filter(Boolean).join('\n').trim();
+    if (!text) {
+      const reason = payload?.promptFeedback?.blockReason || payload?.candidates?.[0]?.finishReason || 'empty response';
+      throw new Error(`Gemini returned no text (${reason}).`);
+    }
+    return text;
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      const timeoutError = new Error('The Gemini request timed out.');
+      timeoutError.code = 'GEMINI_TIMEOUT';
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function getGeminiFailureMessage(error) {
+  const status = Number(error?.statusCode || 0);
+  const message = String(error?.providerMessage || error?.message || '').toLowerCase();
+  if (error?.code === 'GEMINI_TIMEOUT' || /timeout|fetch failed|network|econn|enotfound/i.test(message)) return 'Gemini could not be reached in time. Check the API server network and retry.';
+  if (status === 400) return `Gemini rejected the request: ${String(error?.providerMessage || 'check the model and request settings.').slice(0, 220)}`;
+  if (status === 401 || status === 403) return 'Google Gemini rejected the API key or its permissions. Check GEMINI_API_KEY and the Google AI Studio project.';
+  if (status === 404) return `Gemini model “${geminiModel}” was not found or is unavailable to this API key. Check GEMINI_MODEL.`;
+  if (status === 429) return 'Gemini API rate or usage limits were reached. Check your Google AI Studio quota and try again later.';
+  if (status >= 500) return 'Google Gemini is temporarily unavailable.';
+  return 'Gemini could not complete the request. Check the API key, model, quota, and network.';
 }
 const paypalEnvironment = process.env.PAYPAL_ENVIRONMENT || 'sandbox';
 if (!['sandbox', 'live'].includes(paypalEnvironment)) throw new Error('PAYPAL_ENVIRONMENT must be sandbox or live.');
@@ -728,9 +727,9 @@ app.get('/api/health', async (_req, res) => {
     application: { name: packageInfo.name, version: packageInfo.version, nodeVersion: process.version, environment: process.env.NODE_ENV || 'development', uptimeSeconds: Math.floor(process.uptime()), startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(), serverTime: new Date().toISOString() },
     databaseConfigured,
     databaseReady,
-    aiReady: claudeConfigured,
-    aiModel: claudeModel,
-    aiStatus: getClaudeStatus(),
+    aiReady: geminiConfigured,
+    aiModel: geminiModel,
+    aiStatus: getGeminiStatus(),
     paypalReady: paypalCheckoutReady,
     paypalWebhookReady,
     paypalEnvironment,
@@ -761,24 +760,17 @@ app.get('/api/health', async (_req, res) => {
 });
 
 app.post('/api/ai/check', rateLimit({ windowMs: 10 * 60 * 1000, limit: 3, standardHeaders: 'draft-8', legacyHeaders: false }), async (_req, res) => {
-  if (!claudeConfigured) {
-    const aiStatus = setClaudeStatus('local-only', 'No API key configured; use the local advisor or configure ANTHROPIC_API_KEY on the API server.');
+  if (!geminiConfigured) {
+    const aiStatus = setGeminiStatus('local-only', 'No Gemini API key configured; use the local advisor or add GEMINI_API_KEY to the API server environment.');
     return res.json({ ok: false, aiStatus });
   }
   try {
-    await generateText({
-      model: anthropic(claudeModel),
-      prompt: 'Reply with READY only.',
-      maxOutputTokens: 24,
-      maxRetries: 0,
-      timeout: { totalMs: 15_000 },
-    });
-    return res.json({ ok: true, aiStatus: setClaudeStatus('connected', 'Claude responded successfully.') });
+    await generateGeminiText({ system: 'You are a connection test. Reply with READY only.', prompt: 'Reply with READY only.', maxOutputTokens: 24, timeoutMs: 15_000 });
+    return res.json({ ok: true, aiStatus: setGeminiStatus('connected', 'Google Gemini responded successfully.') });
   } catch (error) {
-    const message = getClaudeFailureMessage(error);
-    const details = inspectClaudeError(error);
-    console.error('Claude connection check failed:', { status: details.status || 'unknown', name: details.providerErrorName, retryWrapper: error?.name === 'AI_RetryError' });
-    return res.json({ ok: false, aiStatus: setClaudeStatus('unavailable', message) });
+    const message = getGeminiFailureMessage(error);
+    console.error('Gemini connection check failed:', { status: error?.statusCode || 'unknown', name: error?.name || 'Error' });
+    return res.json({ ok: false, aiStatus: setGeminiStatus('unavailable', message) });
   }
 });
 
@@ -868,36 +860,32 @@ app.post('/api/analyze', async (req, res) => {
   const scenario = scenarios[scenarioId];
   if (!scenario) return res.status(400).json({ error: 'Choose a supported failure scenario.' });
 
-  if (provider === 'local' || !claudeConfigured) {
-    const reason = provider === 'local' ? null : 'Claude is not configured; the local recovery advisor was used.';
-    return res.json({ ...localAdvice(scenarioId, trace), source: 'local', warning: reason, aiStatus: getClaudeStatus() });
+  if (provider === 'local' || !geminiConfigured) {
+    const reason = provider === 'local' ? null : 'Gemini is not configured; the local recovery advisor was used.';
+    return res.json({ ...localAdvice(scenarioId, trace), source: 'local', warning: reason, aiStatus: getGeminiStatus() });
   }
 
   try {
-    const { text } = await generateText({
-      model: anthropic(claudeModel),
+    const text = await generateGeminiText({
       system: 'You are PayPal Failure Doctor, a careful payment integration reliability engineer. Analyze only the supplied scenario and trace. Never claim money moved unless the trace proves it. Keep the diagnosis and fix specific. Return exactly three labeled sections: DIAGNOSIS, PATCH, VERIFY. PATCH may be pseudocode or a small code change, never a full rewrite.',
       prompt: `Scenario: ${scenario.label} (${scenario.issue})\nExpected safe behavior: ${scenario.expected}\nObserved trace:\n${String(trace).slice(0, 6000)}\nRelevant code:\n${String(code).slice(0, 6000)}`,
       maxOutputTokens: 700,
-      maxRetries: 1,
-      timeout: { totalMs: 20_000 },
+      timeoutMs: 20_000,
     });
     const sections = text.split(/\n(?=PATCH:|VERIFY:)/);
     const diagnosis = sections[0]?.replace(/^DIAGNOSIS:\s*/i, '').trim() || text;
     const patch = sections.find((part) => /^PATCH:/i.test(part))?.replace(/^PATCH:\s*/i, '').trim() || 'Review the complete response below.';
     const verification = sections.find((part) => /^VERIFY:/i.test(part))?.replace(/^VERIFY:\s*/i, '').trim() || scenario.expected;
-    res.json({ diagnosis, patch, verification, evidence: trace, model: claudeModel, source: 'claude', warning: null, aiStatus: setClaudeStatus('connected', 'Claude analysis completed successfully.') });
+    res.json({ diagnosis, patch, verification, evidence: trace, model: geminiModel, source: 'gemini', warning: null, aiStatus: setGeminiStatus('connected', 'Gemini analysis completed successfully.') });
   } catch (error) {
-    const details = inspectClaudeError(error);
-    const status = details.status;
-    const diagnostic = getClaudeFailureMessage(error);
-    console.error('Claude diagnosis failed:', { status: status || 'unknown', name: details.providerErrorName, retryWrapper: error?.name === 'AI_RetryError' });
+    const diagnostic = getGeminiFailureMessage(error);
+    console.error('Gemini diagnosis failed:', { status: error?.statusCode || 'unknown', name: error?.name || 'Error' });
     res.json({
       ...localAdvice(scenarioId, trace),
       source: 'local',
       warning: `${diagnostic} Showing the local recovery advisor instead.`,
-      providerError: status || null,
-      aiStatus: setClaudeStatus('unavailable', diagnostic),
+      providerError: error?.statusCode || null,
+      aiStatus: setGeminiStatus('unavailable', diagnostic),
     });
   }
 });
