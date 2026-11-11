@@ -81,7 +81,22 @@ async function generateOpenRouterText({ system, prompt, maxOutputTokens = 700, t
       ? messageContent.map((part) => part?.text || '').filter(Boolean).join('\n').trim()
       : String(messageContent || '').trim();
 
-    if (!text) throw new Error('OpenRouter returned an empty response.');
+    if (!text) {
+      const firstChoice = payload?.choices?.[0];
+      console.error('OpenRouter empty-response metadata:', {
+        httpStatus: response.status,
+        contentType: response.headers.get('content-type'),
+        topLevelKeys: Object.keys(payload || {}),
+        providerError: String(payload?.error?.message || '').slice(0, 200),
+        choicesCount: Array.isArray(payload?.choices) ? payload.choices.length : null,
+        finishReason: firstChoice?.finish_reason || null,
+        messageKeys: Object.keys(firstChoice?.message || {}),
+        contentTypeDetected: typeof messageContent,
+        contentLength: typeof messageContent === 'string' ? messageContent.length : null,
+        contentParts: Array.isArray(messageContent) ? messageContent.length : null
+      });
+      throw new Error('OpenRouter returned an empty response.');
+    }
 
     return text;
   } catch (error) {
