@@ -143,7 +143,7 @@ app.use('/api', (req, res, next) => {
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 12, standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'Too many sign-in attempts. Try again in 15 minutes.' } });
 app.use('/api', rateLimit({ windowMs: 60 * 1000, limit: 180, standardHeaders: 'draft-8', legacyHeaders: false }));
 const cookieName = process.env.NODE_ENV === 'production' ? '__Host-fd_session' : 'fd_session';
-const cookieSettings = { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 };
+const cookieSettings = { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 };
 const hashToken = (token) => createHash('sha256').update(token).digest('hex');
 const appDataDirectory = join(dirname(fileURLToPath(import.meta.url)), 'data');
 const localAuthStorePath = process.env.LOCAL_AUTH_STORE_PATH || join(appDataDirectory, 'auth.json');
