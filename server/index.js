@@ -793,7 +793,7 @@ app.post('/api/ai/check', rateLimit({ windowMs: 10 * 60 * 1000, limit: 3, standa
     return res.json({ ok: true, aiStatus: setOpenRouterStatus('connected', 'OpenRouter responded successfully.') });
   } catch (error) {
     const message = getOpenRouterFailureMessage(error);
-    console.error('OpenRouter connection check failed:', { status: error?.statusCode || 'unknown', name: error?.name || 'Error' });
+    console.error('OpenRouter connection check failed:', { status: error?.statusCode || 'unknown', name: error?.name || 'Error', code: error?.code || error?.cause?.code || null, message: String(error?.message || '').slice(0, 240), cause: String(error?.cause?.message || '').slice(0, 240) });
     return res.json({ ok: false, aiStatus: setOpenRouterStatus('unavailable', message) });
   }
 });
@@ -903,7 +903,7 @@ app.post('/api/analyze', async (req, res) => {
     res.json({ diagnosis, patch, verification, evidence: trace, model: openRouterModel, source: 'openrouter', warning: null, aiStatus: setOpenRouterStatus('connected', 'OpenRouter analysis completed successfully.') });
   } catch (error) {
     const diagnostic = getOpenRouterFailureMessage(error);
-    console.error('OpenRouter diagnosis failed:', { status: error?.statusCode || 'unknown', name: error?.name || 'Error' });
+    console.error('OpenRouter diagnosis failed:', { status: error?.statusCode || 'unknown', name: error?.name || 'Error', code: error?.code || error?.cause?.code || null, message: String(error?.message || '').slice(0, 240), cause: String(error?.cause?.message || '').slice(0, 240) });
     res.json({
       ...localAdvice(scenarioId, trace),
       source: 'local',
