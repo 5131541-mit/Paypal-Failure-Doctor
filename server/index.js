@@ -1,4 +1,4 @@
-import 'dotenv/config';
+﻿import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { randomUUID } from 'node:crypto';
@@ -20,51 +20,74 @@ import { summarizeWebhookEvent, verifyPayPalWebhook } from './paypal-webhooks.js
 const app = express();
 const port = Number(process.env.PORT || 8787);
 const packageInfo = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
-const geminiApiKey = process.env.GEMINI_API_KEY || '';
-const geminiConfigured = Boolean(geminiApiKey);
-let geminiStatus = {
-  state: geminiConfigured ? 'configured' : 'local-only',
+const openRouterModel = process.env.OPENROUTER_MODEL || 'openrouter/free';
+const openRouterApiKey = process.env.OPENROUTER_API_KEY || '';
+const openRouterConfigured = Boolean(openRouterApiKey);
+
+let openRouterStatus = {
+  state: openRouterConfigured ? 'configured' : 'local-only',
   checkedAt: null,
-  message: geminiConfigured ? 'Gemini API key is configured; run a connection check or diagnosis to confirm access.' : 'No Gemini API key configured; the local advisor is available.',
+  message: openRouterConfigured
+    ? 'OpenRouter API key is configured; run a connection check or diagnosis to confirm access.'
+    : 'No OpenRouter API key configured; the local advisor is available.',
 };
-const getGeminiStatus = () => ({ ...geminiStatus, configured: geminiConfigured, model: geminiModel });
-function setGeminiStatus(state, message) {
-  geminiStatus = { state, checkedAt: new Date().toISOString(), message };
-  return getGeminiStatus();
+
+const getOpenRouterStatus = () => ({
+  ...openRouterStatus,
+  configured: openRouterConfigured,
+  model: openRouterModel,
+});
+
+function setOpenRouterStatus(state, message) {
+  openRouterStatus = { state, checkedAt: new Date().toISOString(), message };
+  return getOpenRouterStatus();
 }
 
-async function generateGeminiText({ system, prompt, maxOutputTokens = 700, timeoutMs = 20_000 }) {
+async function generateOpenRouterText({ system, prompt, maxOutputTokens = 700, timeoutMs = 20_000 }) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(geminiModel)}:generateContent`, {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiApiKey },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${openRouterApiKey}`,
+      },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: system }] },
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens, temperature: 0.2 },
+        model: openRouterModel,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: prompt },
+        ],
+        max_tokens: maxOutputTokens,
+        temperature: 0.2,
       }),
       signal: controller.signal,
     });
+
     const payload = await response.json().catch(() => ({}));
+
     if (!response.ok) {
-      const error = new Error(payload?.error?.message || `Gemini API returned HTTP ${response.status}.`);
+      const providerMessage = String(payload?.error?.message || payload?.message || '');
+      const error = new Error(providerMessage || `OpenRouter API returned HTTP ${response.status}.`);
       error.statusCode = response.status;
-      error.providerMessage = String(payload?.error?.message || '');
+      error.providerMessage = providerMessage;
       throw error;
     }
-    const text = (payload?.candidates?.[0]?.content?.parts || []).map((part) => part.text || '').filter(Boolean).join('\n').trim();
-    if (!text) {
-      const reason = payload?.promptFeedback?.blockReason || payload?.candidates?.[0]?.finishReason || 'empty response';
-      throw new Error(`Gemini returned no text (${reason}).`);
-    }
+
+    const messageContent = payload?.choices?.[0]?.message?.content;
+    const text = Array.isArray(messageContent)
+      ? messageContent.map((part) => part?.text || '').filter(Boolean).join('\n').trim()
+      : String(messageContent || '').trim();
+
+    if (!text) throw new Error('OpenRouter returned an empty response.');
+
     return text;
   } catch (error) {
     if (error?.name === 'AbortError') {
-      const timeoutError = new Error('The Gemini request timed out.');
-      timeoutError.code = 'GEMINI_TIMEOUT';
+      const timeoutError = new Error('The OpenRouter request timed out.');
+      timeoutError.code = 'OPENROUTER_TIMEOUT';
       throw timeoutError;
     }
     throw error;
@@ -73,18 +96,19 @@ async function generateGeminiText({ system, prompt, maxOutputTokens = 700, timeo
   }
 }
 
-function getGeminiFailureMessage(error) {
+function getOpenRouterFailureMessage(error) {
   const status = Number(error?.statusCode || 0);
   const message = String(error?.providerMessage || error?.message || '').toLowerCase();
-  if (error?.code === 'GEMINI_TIMEOUT' || /timeout|fetch failed|network|econn|enotfound/i.test(message)) return 'Gemini could not be reached in time. Check the API server network and retry.';
-  if (status === 400) return `Gemini rejected the request: ${String(error?.providerMessage || 'check the model and request settings.').slice(0, 220)}`;
-  if (status === 401 || status === 403) return 'Google Gemini rejected the API key or its permissions. Check GEMINI_API_KEY and the Google AI Studio project.';
-  if (status === 404) return `Gemini model “${geminiModel}” was not found or is unavailable to this API key. Check GEMINI_MODEL.`;
-  if (status === 429) return 'Gemini API rate or usage limits were reached. Check your Google AI Studio quota and try again later.';
-  if (status >= 500) return 'Google Gemini is temporarily unavailable.';
-  return 'Gemini could not complete the request. Check the API key, model, quota, and network.';
-}
-const paypalEnvironment = process.env.PAYPAL_ENVIRONMENT || 'sandbox';
+
+  if (error?.code === 'OPENROUTER_TIMEOUT' || /timeout|fetch failed|network|econn|enotfound/i.test(message)) return 'OpenRouter could not be reached in time. Check the API server network and retry.';
+  if (status === 400) return `OpenRouter rejected the request: ${String(error?.providerMessage || 'Check the model and request settings.').slice(0, 220)}`;
+  if (status === 401 || status === 403) return 'OpenRouter rejected the API key or its permissions. Check OPENROUTER_API_KEY in the API server environment.';
+  if (status === 402) return 'OpenRouter reported an account or credit restriction. Confirm that the selected model is free and available.';
+  if (status === 404) return `OpenRouter model "${openRouterModel}" was not found or is unavailable.`;
+  if (status === 429) return 'OpenRouter rate or usage limits were reached. Wait and try again later.';
+  if (status >= 500) return 'OpenRouter is temporarily unavailable.';
+  return 'OpenRouter could not complete the request. Check the API key, model, usage limits, and network.';
+}const paypalEnvironment = process.env.PAYPAL_ENVIRONMENT || 'sandbox';
 if (!['sandbox', 'live'].includes(paypalEnvironment)) throw new Error('PAYPAL_ENVIRONMENT must be sandbox or live.');
 if (paypalEnvironment === 'live' && process.env.NODE_ENV !== 'production') throw new Error('Live PayPal is only allowed when NODE_ENV=production.');
 const livePaymentsRequested = process.env.PAYPAL_LIVE_PAYMENTS_ENABLED === 'true';
@@ -621,7 +645,7 @@ function broadcastWebhookDelivery(event, workspaceId) {
     createdAt: event.lastReceivedAt,
     orderId: event.orderId || undefined,
     deliveries: event.deliveries,
-    trace: `Verified PayPal ${paypalEnvironment === 'live' ? 'Live' : 'Sandbox'} webhook · ${event.status || event.resourceId || 'event received'}`,
+    trace: `Verified PayPal ${paypalEnvironment === 'live' ? 'Live' : 'Sandbox'} webhook Â· ${event.status || event.resourceId || 'event received'}`,
   }, workspaceId);
 }
 function connectActivityListener() {
@@ -675,7 +699,7 @@ async function persistEvent(event, req) {
 const scenarios = {
   INSTRUMENT_DECLINED: {
     label: 'Funding source declined',
-    summary: 'The buyer’s funding source was declined during capture.',
+    summary: 'The buyerâ€™s funding source was declined during capture.',
     issue: 'INSTRUMENT_DECLINED',
     expected: 'Keep the order unfulfilled and offer the buyer a safe way to choose another funding source.',
     code: 'const capture = await paypal.captureOrder(orderId);\nreturn { success: true, message: "Payment complete" };',
@@ -701,7 +725,7 @@ const localAdvice = (scenario, trace) => {
     INSTRUMENT_DECLINED: {
       diagnosis: 'The checkout treats a declined funding source like a successful payment. That can mark an unpaid order as fulfilled.',
       patch: 'Branch on INSTRUMENT_DECLINED, return a recoverable response to the browser, and let the buyer restart checkout with another funding source.',
-      verification: 'A decline must leave fulfillment disabled. The UI should offer a retry path and must never show “Payment complete.”',
+      verification: 'A decline must leave fulfillment disabled. The UI should offer a retry path and must never show â€œPayment complete.â€',
     },
     DUPLICATE_INVOICE_ID: {
       diagnosis: 'The same invoice identifier is being reused. PayPal can reject the request, and a blind retry may repeat the same failure.',
@@ -727,9 +751,9 @@ app.get('/api/health', async (_req, res) => {
     application: { name: packageInfo.name, version: packageInfo.version, nodeVersion: process.version, environment: process.env.NODE_ENV || 'development', uptimeSeconds: Math.floor(process.uptime()), startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(), serverTime: new Date().toISOString() },
     databaseConfigured,
     databaseReady,
-    aiReady: geminiConfigured,
-    aiModel: geminiModel,
-    aiStatus: getGeminiStatus(),
+    aiReady: openRouterConfigured,
+    aiModel: openRouterModel,
+    aiStatus: getOpenRouterStatus(),
     paypalReady: paypalCheckoutReady,
     paypalWebhookReady,
     paypalEnvironment,
@@ -760,17 +784,17 @@ app.get('/api/health', async (_req, res) => {
 });
 
 app.post('/api/ai/check', rateLimit({ windowMs: 10 * 60 * 1000, limit: 3, standardHeaders: 'draft-8', legacyHeaders: false }), async (_req, res) => {
-  if (!geminiConfigured) {
-    const aiStatus = setGeminiStatus('local-only', 'No Gemini API key configured; use the local advisor or add GEMINI_API_KEY to the API server environment.');
+  if (!openRouterConfigured) {
+    const aiStatus = setOpenRouterStatus('local-only', 'No OpenRouter API key configured; use the local advisor or add OPENROUTER_API_KEY to the API server environment.');
     return res.json({ ok: false, aiStatus });
   }
   try {
-    await generateGeminiText({ system: 'You are a connection test. Reply with READY only.', prompt: 'Reply with READY only.', maxOutputTokens: 24, timeoutMs: 15_000 });
-    return res.json({ ok: true, aiStatus: setGeminiStatus('connected', 'Google Gemini responded successfully.') });
+    await generateOpenRouterText({ system: 'You are a connection test. Reply with READY only.', prompt: 'Reply with READY only.', maxOutputTokens: 24, timeoutMs: 15_000 });
+    return res.json({ ok: true, aiStatus: setOpenRouterStatus('connected', 'OpenRouter responded successfully.') });
   } catch (error) {
-    const message = getGeminiFailureMessage(error);
-    console.error('Gemini connection check failed:', { status: error?.statusCode || 'unknown', name: error?.name || 'Error' });
-    return res.json({ ok: false, aiStatus: setGeminiStatus('unavailable', message) });
+    const message = getOpenRouterFailureMessage(error);
+    console.error('OpenRouter connection check failed:', { status: error?.statusCode || 'unknown', name: error?.name || 'Error' });
+    return res.json({ ok: false, aiStatus: setOpenRouterStatus('unavailable', message) });
   }
 });
 
@@ -860,13 +884,13 @@ app.post('/api/analyze', async (req, res) => {
   const scenario = scenarios[scenarioId];
   if (!scenario) return res.status(400).json({ error: 'Choose a supported failure scenario.' });
 
-  if (provider === 'local' || !geminiConfigured) {
-    const reason = provider === 'local' ? null : 'Gemini is not configured; the local recovery advisor was used.';
-    return res.json({ ...localAdvice(scenarioId, trace), source: 'local', warning: reason, aiStatus: getGeminiStatus() });
+  if (provider === 'local' || !openRouterConfigured) {
+    const reason = provider === 'local' ? null : 'OpenRouter is not configured; the local recovery advisor was used.';
+    return res.json({ ...localAdvice(scenarioId, trace), source: 'local', warning: reason, aiStatus: getOpenRouterStatus() });
   }
 
   try {
-    const text = await generateGeminiText({
+    const text = await generateOpenRouterText({
       system: 'You are PayPal Failure Doctor, a careful payment integration reliability engineer. Analyze only the supplied scenario and trace. Never claim money moved unless the trace proves it. Keep the diagnosis and fix specific. Return exactly three labeled sections: DIAGNOSIS, PATCH, VERIFY. PATCH may be pseudocode or a small code change, never a full rewrite.',
       prompt: `Scenario: ${scenario.label} (${scenario.issue})\nExpected safe behavior: ${scenario.expected}\nObserved trace:\n${String(trace).slice(0, 6000)}\nRelevant code:\n${String(code).slice(0, 6000)}`,
       maxOutputTokens: 700,
@@ -876,16 +900,16 @@ app.post('/api/analyze', async (req, res) => {
     const diagnosis = sections[0]?.replace(/^DIAGNOSIS:\s*/i, '').trim() || text;
     const patch = sections.find((part) => /^PATCH:/i.test(part))?.replace(/^PATCH:\s*/i, '').trim() || 'Review the complete response below.';
     const verification = sections.find((part) => /^VERIFY:/i.test(part))?.replace(/^VERIFY:\s*/i, '').trim() || scenario.expected;
-    res.json({ diagnosis, patch, verification, evidence: trace, model: geminiModel, source: 'gemini', warning: null, aiStatus: setGeminiStatus('connected', 'Gemini analysis completed successfully.') });
+    res.json({ diagnosis, patch, verification, evidence: trace, model: openRouterModel, source: 'openrouter', warning: null, aiStatus: setOpenRouterStatus('connected', 'OpenRouter analysis completed successfully.') });
   } catch (error) {
-    const diagnostic = getGeminiFailureMessage(error);
-    console.error('Gemini diagnosis failed:', { status: error?.statusCode || 'unknown', name: error?.name || 'Error' });
+    const diagnostic = getOpenRouterFailureMessage(error);
+    console.error('OpenRouter diagnosis failed:', { status: error?.statusCode || 'unknown', name: error?.name || 'Error' });
     res.json({
       ...localAdvice(scenarioId, trace),
       source: 'local',
       warning: `${diagnostic} Showing the local recovery advisor instead.`,
       providerError: error?.statusCode || null,
-      aiStatus: setGeminiStatus('unavailable', diagnostic),
+      aiStatus: setOpenRouterStatus('unavailable', diagnostic),
     });
   }
 });
@@ -1000,7 +1024,7 @@ app.post('/api/paypal/webhooks', rateLimit({ windowMs: 60 * 1000, limit: 60, sta
       safeEvent.lastReceivedAt = result.rows[0].last_received_at;
       if (duplicate) broadcastWebhookDelivery(safeEvent, workspaceId);
       if (!duplicate && workspaceId) {
-        const activity = { runId: `PP-WH-${safeEvent.id}`, webhookEventId: safeEvent.id, deliveries: safeEvent.deliveries, scenario: null, outcome: `WEBHOOK ${safeEvent.type}`, source: `PayPal ${paypalEnvironment === 'live' ? 'Live' : 'Sandbox'}`, createdAt: new Date().toISOString(), orderId: safeEvent.orderId || undefined, trace: `Verified PayPal ${paypalEnvironment === 'live' ? 'Live' : 'Sandbox'} webhook · ${safeEvent.status || safeEvent.resourceId || 'event received'}` };
+        const activity = { runId: `PP-WH-${safeEvent.id}`, webhookEventId: safeEvent.id, deliveries: safeEvent.deliveries, scenario: null, outcome: `WEBHOOK ${safeEvent.type}`, source: `PayPal ${paypalEnvironment === 'live' ? 'Live' : 'Sandbox'}`, createdAt: new Date().toISOString(), orderId: safeEvent.orderId || undefined, trace: `Verified PayPal ${paypalEnvironment === 'live' ? 'Live' : 'Sandbox'} webhook Â· ${safeEvent.status || safeEvent.resourceId || 'event received'}` };
         try { await persistEvent(activity, { user: { workspace_id: workspaceId, user_id: null } }); }
         catch (error) { console.error('Could not publish verified PayPal webhook activity:', error.message); }
       }
@@ -1020,7 +1044,7 @@ app.post('/api/paypal/webhooks', rateLimit({ windowMs: 60 * 1000, limit: 60, sta
         localWebhookEvents = [safeEvent, ...localWebhookEvents].slice(0, 500);
         saveLocalWebhookEvents();
         if (workspaceId) {
-          const activity = { runId: `PP-WH-${safeEvent.id}`, webhookEventId: safeEvent.id, deliveries: safeEvent.deliveries, scenario: null, outcome: `WEBHOOK ${safeEvent.type}`, source: `PayPal ${paypalEnvironment === 'live' ? 'Live' : 'Sandbox'}`, createdAt: safeEvent.firstReceivedAt, orderId: safeEvent.orderId || undefined, trace: `Verified PayPal ${paypalEnvironment === 'live' ? 'Live' : 'Sandbox'} webhook · ${safeEvent.status || safeEvent.resourceId || 'event received'}` };
+          const activity = { runId: `PP-WH-${safeEvent.id}`, webhookEventId: safeEvent.id, deliveries: safeEvent.deliveries, scenario: null, outcome: `WEBHOOK ${safeEvent.type}`, source: `PayPal ${paypalEnvironment === 'live' ? 'Live' : 'Sandbox'}`, createdAt: safeEvent.firstReceivedAt, orderId: safeEvent.orderId || undefined, trace: `Verified PayPal ${paypalEnvironment === 'live' ? 'Live' : 'Sandbox'} webhook Â· ${safeEvent.status || safeEvent.resourceId || 'event received'}` };
           try { await persistEvent(activity, { user: { workspace_id: workspaceId } }); }
           catch (error) { console.error('Could not publish verified PayPal webhook activity:', error.message); }
         }
@@ -1088,7 +1112,7 @@ app.post('/api/paypal/orders/:orderId/capture', async (req, res) => {
       ? (data.status === 'COMPLETED' ? 'PAYMENT CAPTURED' : 'LIVE CAPTURE NOT COMPLETED')
       : (mockedFailure ? 'EXPECTED FAILURE REPRODUCED' : data.status === 'COMPLETED' ? 'UNEXPECTED CAPTURE' : 'FAILURE NOT CONFIRMED');
     const providerName = `PayPal ${paypalEnvironment === 'live' ? 'Live' : 'Sandbox'}`;
-    const event = { runId: `PP-${req.params.orderId}-CAPTURE`, scenario: scenarioId || null, outcome, source: providerName, createdAt: new Date().toISOString(), orderId: req.params.orderId, trace: `HTTP ${response.status} · ${data.status || data.name || 'CAPTURE RESPONSE'}${details ? `\n${details}` : ''}` };
+    const event = { runId: `PP-${req.params.orderId}-CAPTURE`, scenario: scenarioId || null, outcome, source: providerName, createdAt: new Date().toISOString(), orderId: req.params.orderId, trace: `HTTP ${response.status} Â· ${data.status || data.name || 'CAPTURE RESPONSE'}${details ? `\n${details}` : ''}` };
     await persistEvent(event, req);
     const safeData = { status: data.status || null, name: data.name || null, details: safeDetails, mockedFailure };
     res.status(response.status).json(safeData);
