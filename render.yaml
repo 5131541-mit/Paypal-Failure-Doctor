@@ -5,8 +5,7 @@ services:
     runtime: node
     region: singapore
     plan: free
-    buildCommand: npm ci && npm run build
-    preDeployCommand: npm run db:migrate
+    buildCommand: npm ci && npm run db:migrate && npm run build
     startCommand: npm start
     healthCheckPath: /api/health
     autoDeployTrigger: commit
@@ -24,7 +23,7 @@ services:
       - key: ALLOWED_ORIGINS
         sync: false
       - key: MFA_ENCRYPTION_KEY
-        sync: false
+        generateValue: true
       - key: PAYPAL_CLIENT_ID
         sync: false
       - key: PAYPAL_CLIENT_SECRET
