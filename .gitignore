@@ -1,0 +1,9 @@
+node_modules/
+.npm-cache/
+dist/
+.env*
+!.env.example
+server/data/
+*.dump
+.backups/
+.DS_Store
