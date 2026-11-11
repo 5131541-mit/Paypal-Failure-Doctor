@@ -1,19 +1,10 @@
-databases:
-  - name: failure-doctor-db
-    region: singapore
-    plan: basic-256mb
-    postgresMajorVersion: "17"
-    databaseName: failuredoctor
-    user: failuredoctor
-    diskSizeGB: 1
-    ipAllowList: []
 
 services:
   - type: web
     name: paypal-failure-doctor-api
     runtime: node
     region: singapore
-    plan: 0.5c-512mb
+    plan: free
     buildCommand: npm ci && npm run build
     preDeployCommand: npm run db:migrate
     startCommand: npm start
@@ -27,9 +18,9 @@ services:
       - key: PAYPAL_LIVE_PAYMENTS_ENABLED
         value: "false"
       - key: DATABASE_URL
-        fromDatabase:
-          name: failure-doctor-db
-          property: connectionString
+        sync: false
+      - key: PGSSLMODE
+        value: require
       - key: ALLOWED_ORIGINS
         sync: false
       - key: MFA_ENCRYPTION_KEY
