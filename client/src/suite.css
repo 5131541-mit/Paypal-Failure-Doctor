@@ -1,0 +1,141 @@
+.suite-panel {
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.suite-panel .panel-head {
+  align-items: center;
+}
+
+.suite-progress {
+  padding: 0 16px 14px;
+}
+
+.suite-progress-track {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf0f4;
+}
+
+.suite-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #5277ae;
+  transition: width 180ms ease;
+}
+
+.suite-progress small {
+  display: block;
+  margin-top: 7px;
+  color: #7f8998;
+  font-size: 9px;
+}
+
+.suite-table-wrap {
+  overflow-x: auto;
+  border-top: 1px solid #edf0f3;
+}
+
+.suite-table {
+  width: 100%;
+  min-width: 490px;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.suite-table thead th {
+  padding: 10px 16px;
+  color: #929baa;
+  font: 500 8px 'DM Mono', monospace;
+  letter-spacing: .35px;
+  text-transform: uppercase;
+  background: #fafbfc;
+}
+
+.suite-table tbody th,
+.suite-table tbody td {
+  padding: 11px 16px;
+  border-top: 1px solid #f0f2f5;
+  vertical-align: middle;
+}
+
+.suite-table tbody th b {
+  display: block;
+  color: #465267;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.suite-table tbody th small {
+  display: block;
+  margin-top: 4px;
+  color: #9aa2ae;
+  font: 8px 'DM Mono', monospace;
+}
+
+.suite-state,
+.suite-pending {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 4px 7px;
+  border-radius: 999px;
+  font: 500 7px 'DM Mono', monospace;
+  letter-spacing: .15px;
+  white-space: nowrap;
+}
+
+.suite-state.pass {
+  color: #24804f;
+  background: #eaf7ef;
+}
+
+.suite-state.fail {
+  color: #a84242;
+  background: #fff0ed;
+}
+
+.suite-pending {
+  color: #8992a0;
+  background: #f1f2f4;
+}
+
+.suite-footnote {
+  padding: 11px 16px 13px;
+  color: #8b95a3;
+  font-size: 8px;
+  line-height: 1.5;
+}
+
+@media (max-width: 520px) {
+  .suite-panel .panel-head {
+    align-items: flex-start;
+  }
+
+  .suite-panel .panel-head > .pill {
+    flex: none;
+    margin-top: 2px;
+  }
+
+  .suite-progress {
+    padding-inline: 12px;
+  }
+
+  .suite-table thead th,
+  .suite-table tbody th,
+  .suite-table tbody td {
+    padding-inline: 12px;
+  }
+
+  .suite-footnote {
+    padding-inline: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .suite-progress-track span {
+    transition: none;
+  }
+}

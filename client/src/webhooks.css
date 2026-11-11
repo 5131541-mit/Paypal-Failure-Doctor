@@ -1,0 +1,18 @@
+.webhook-panel { margin-bottom: 22px; }
+.webhook-heading-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.webhook-heading-actions .secondary-btn { min-height: 30px; }
+.webhook-callout { margin: 8px 0 10px; overflow-wrap: anywhere; }
+.webhook-callout code { overflow-wrap: anywhere; }
+.webhook-list { padding: 2px 3px; }
+.webhook-row { display: flex; align-items: center; gap: 11px; padding: 11px 2px; border-bottom: 1px solid #f0f2f5; }
+.webhook-row:last-child { border-bottom: 0; }
+.webhook-status { flex: 0 0 23px; width: 23px; height: 23px; display: grid; place-items: center; border-radius: 50%; color: #2c8157; background: #eaf6ee; font-size: 12px; font-weight: 700; }
+.webhook-summary { flex: 1; min-width: 0; }
+.webhook-summary b { display: block; color: #465267; font-size: 10px; overflow-wrap: anywhere; }
+.webhook-summary small { display: block; margin-top: 4px; color: #8993a2; font-size: 8px; line-height: 1.5; overflow-wrap: anywhere; }
+.webhook-deliveries { flex: 0 0 auto; color: #6c788b; font: 8px 'DM Mono', monospace; }
+@media (max-width: 520px) {
+  .webhook-heading-actions { justify-content: flex-start; margin-top: 10px; }
+  .webhook-row { align-items: flex-start; gap: 8px; }
+  .webhook-deliveries { padding-top: 3px; }
+}

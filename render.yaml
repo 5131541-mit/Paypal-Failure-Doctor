@@ -1,0 +1,84 @@
+databases:
+  - name: failure-doctor-db
+    region: singapore
+    plan: basic-256mb
+    postgresMajorVersion: "17"
+    databaseName: failuredoctor
+    user: failuredoctor
+    diskSizeGB: 1
+    ipAllowList: []
+
+services:
+  - type: web
+    name: paypal-failure-doctor-api
+    runtime: node
+    region: singapore
+    plan: 0.5c-512mb
+    buildCommand: npm ci && npm run build
+    preDeployCommand: npm run db:migrate
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PAYPAL_ENVIRONMENT
+        value: sandbox
+      - key: PAYPAL_LIVE_PAYMENTS_ENABLED
+        value: "false"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: failure-doctor-db
+          property: connectionString
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: MFA_ENCRYPTION_KEY
+        sync: false
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: PAYPAL_WEBHOOK_ID
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CLAUDE_MODEL
+        value: claude-sonnet-5-5
+      - key: PAYPAL_CURRENCY
+        value: USD
+
+  - type: web
+    name: paypal-failure-doctor
+    runtime: static
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    autoDeployTrigger: commit
+    envVars:
+      - key: VITE_API_BASE_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: Strict-Transport-Security
+        value: "max-age=31536000"
+      - path: /*
+        name: Permissions-Policy
+        value: camera=(), microphone=(), geolocation=()
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self' https://www.sandbox.paypal.com https://www.paypal.com; connect-src 'self' https://api-m.sandbox.paypal.com https://api-m.paypal.com https://www.sandbox.paypal.com https://www.paypal.com https://paypal-failure-doctor-api.onrender.com; frame-src 'self' https://www.sandbox.paypal.com https://www.paypal.com https://*.paypal.com; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https:; font-src 'self' data: https:"
