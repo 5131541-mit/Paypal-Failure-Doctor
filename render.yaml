@@ -24,8 +24,8 @@ services:
         sync: false
       - key: MFA_ENCRYPTION_KEY
         generateValue: true
-      - key: GEMINI_MODEL
-        value: gemini-3.8-flash
+      - key: OPENROUTER_MODEL
+        value: openrouter/free
       - key: PAYPAL_CURRENCY
         value: USD
 

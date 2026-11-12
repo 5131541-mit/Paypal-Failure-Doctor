@@ -11,8 +11,8 @@ An AI-assisted payment reliability workbench for PayPal integrations. Reproduce 
 - **Account controls:** Profile settings persist workspace renames. Signed-in users can change passwords after verifying the current password; the API revokes their other active sessions.
 - **Operations:** Settings report application version, Node runtime, environment, uptime, and server time. Networking runs browser-side API latency and authenticated SSE connection checks.
 - **Encryption:** The Encryption module can export the current run and advisor summary as a redacted `.fdx` incident bundle, encrypted in the browser with AES-256-GCM and a PBKDF2-SHA256-derived key. The passphrase is never sent to the server; this protects the exported file, not database records.
-- **AI:** Google Gemini through the Gemini REST API. The AI receives the chosen scenario, trace, and sample code. It cannot create or capture a payment. The **Try local advisor** action uses deterministic rules bundled in the React app, so it works without an API key or network request after the app has loaded. Gemini-powered analysis still requires the API server and a valid key.
-- **AI diagnostics:** The Settings panel distinguishes a configured key from a verified Gemini connection. **Check Gemini connection** sends one small, rate-limited server-side request; diagnosis requests have a 20-second total timeout and fall back to the local advisor with a specific key, model, billing, rate-limit, or network message.
+- **AI:** OpenRouter through its API. The AI receives the chosen scenario, trace, and sample code. It cannot create or capture a payment. The **Try local advisor** action uses deterministic rules bundled in the React app, so it works without an API key or network request after the app has loaded. OpenRouter-powered analysis still requires the API server and a valid key.
+- **AI diagnostics:** The Settings panel distinguishes a configured key from a verified OpenRouter connection. **Check OpenRouter connection** sends one small, rate-limited server-side request; diagnosis requests have a 20-second total timeout and fall back to the local advisor with a specific key, model, billing, rate-limit, or network message.
 - **Payments:** PayPal JavaScript SDK v6 and Orders v2 use a server-selected environment. Sandbox remains the default. Live checkout is gated behind production runtime, PostgreSQL, distinct Live credentials and webhook, explicit enablement, and a server-configured product price and description. Failure injection is Sandbox-only.
 - **Infrastructure:** Node-only local MVP for a quick start; optional Docker Compose for local PostgreSQL; Render Blueprint for HTTPS hosting and managed PostgreSQL.
 - **Security:** Helmet headers and CSP, exact-origin CORS, origin checks on mutations, JSON payload limits, API and login rate limits, environment-based secrets, and a private database allow list.
@@ -23,7 +23,7 @@ flowchart LR
   Browser -->|HTTPS API + SSE, credentials| API[Express API]
   API -->|Private network, parameterized SQL| DB[(Render PostgreSQL)]
   API -->|Sandbox Orders v2| PayPal[PayPal Sandbox]
-  API -->|Scenario + trace| Gemini[Google Gemini]
+  API -->|Scenario + trace| OpenRouter[OpenRouter]
   DB -.->|PITR and snapshots on paid plan| Backup[Render recovery]
   DB -.->|Optional scheduled pg_dump| S3[Private S3 bucket]
 ```
@@ -41,7 +41,7 @@ Open `http://localhost:8787` and create the first workspace account. Without `DA
 
 To try the app from a phone or tablet on the same Wi-Fi, open `http://<PC-LAN-IP>:8787` and allow Node through Windows Firewall if prompted. Local HTTP is for sandbox/demo use only; use the HTTPS Render URL for access over the public internet.
 
-For PostgreSQL-backed local development, install Docker Desktop, set `DATABASE_URL=postgresql://failuredoctor:[REDACTED]@localhost:5432/failuredoctor` in `.env`, then run:
+For PostgreSQL-backed local development, install Docker Desktop, copy `.env.example` to `.env`, and edit your private `.env` file. Set `POSTGRES_PASSWORD` to a strong, local-only alphanumeric password (at least 20 characters). Set `DATABASE_URL` to `postgresql://failuredoctor:YOUR_LOCAL_PASSWORD@localhost:5432/failuredoctor`, replacing `YOUR_LOCAL_PASSWORD` with that same password. Keep `.env` out of Git. Then run:
 
 ```powershell
 docker compose up -d postgres
@@ -69,8 +69,8 @@ Or run the built app and database together at `http://localhost:8787` with `dock
 | `PAYPAL_LIVE_CLIENT_ID` / `PAYPAL_LIVE_CLIENT_SECRET` | Live REST app credentials. Keep the Secret server-side and separate from Sandbox credentials. |
 | `PAYPAL_LIVE_WEBHOOK_ID` | Webhook ID from the matching Live PayPal app. |
 | `PAYPAL_LIVE_AMOUNT` / `PAYPAL_LIVE_CURRENCY` / `PAYPAL_LIVE_DESCRIPTION` | Required server-side checkout product configuration. No Live amount or product is assumed by the app. |
-| `GEMINI_API_KEY` | Optional Google Gemini API key for AI-powered diagnosis. |
-| `GEMINI_MODEL` | Gemini model name configured for the API; defaults to `gemini-3.8-flash`. |
+| `OPENROUTER_API_KEY` | Optional OpenRouter API key for AI-powered diagnosis. |
+| `OPENROUTER_MODEL` | OpenRouter model name configured for the API; defaults to `openrouter/free`. |
 | `PG_POOL_MAX` | PostgreSQL connection pool size (default 10). |
 | `PGSSLMODE` | Set to `require` only when your remote database connection requires TLS. |
 
@@ -89,7 +89,7 @@ Set `MFA_ENCRYPTION_KEY` on the API server before enrollment. Generate a key onc
 1. Deploy the app to an HTTPS URL that PayPal can reach. Set the webhook URL to `https://<your-api-host>/api/paypal/webhooks` in the same PayPal Sandbox app as the client credentials.
 2. Subscribe to checkout/order and payment/capture events that you want to inspect (for example, `CHECKOUT.ORDER.APPROVED`, `CHECKOUT.ORDER.COMPLETED`, `PAYMENT.CAPTURE.COMPLETED`, and `PAYMENT.CAPTURE.DENIED`).
 3. Copy that webhook's ID into the API server as `PAYPAL_WEBHOOK_ID`. The server verifies each signature by calling PayPal's official Sandbox verification endpoint before storing a minimal summary.
-4. Open **Test runs → PayPal webhook reconciliation**. Deliveries linked to an order created in that workspace appear there; repeated PayPal delivery IDs increment the count and do not create a second activity record.
+4. Open **Test runs > PayPal webhook reconciliation**. Deliveries linked to an order created in that workspace appear there; repeated PayPal delivery IDs increment the count and do not create a second activity record.
 
 This route is unavailable until the client ID, client secret, and webhook ID are configured. A local `localhost` URL cannot receive PayPal's internet webhook calls. For local-only route tests, use PayPal's webhook simulator or a secure tunnel and keep it in Sandbox.
 
@@ -100,7 +100,7 @@ The root `render.yaml` defines a Singapore-region Node API, a managed PostgreSQL
 1. Push this repository to a public or private GitHub repository.
 2. For the MVP, open the API web service's root URL: Express serves the built app from the same origin, so secure sign-in works with the default Render URL. To use the separate static CDN frontend, add custom domains under the same parent domain, such as `app.example.com` and `api.example.com`; the default Render subdomains are separate sites and are unreliable for cross-site session cookies.
 3. In Render, create a Blueprint from that repository and review every resource and plan before applying it. At setup, set `VITE_API_BASE_URL` to the API custom domain and `ALLOWED_ORIGINS` to the comma-separated browser origins you will use (the frontend custom domain, and the API domain too if you plan to open its same-origin app). Also update the frontend Content-Security-Policy `connect-src` with the API custom domain.
-4. The Blueprint sets `PAYPAL_ENVIRONMENT=sandbox` and `PAYPAL_LIVE_PAYMENTS_ENABLED=false`. Add Sandbox credentials and the optional Sandbox webhook ID, plus `GEMINI_API_KEY`, in the Render Dashboard; never put secrets in `render.yaml` or Git. Sandbox remains fictional-money testing even though the app server runs in production mode.
+4. The Blueprint sets `PAYPAL_ENVIRONMENT=sandbox` and `PAYPAL_LIVE_PAYMENTS_ENABLED=false`. Add Sandbox credentials and the optional Sandbox webhook ID, plus `OPENROUTER_API_KEY`, in the Render Dashboard; never put secrets in `render.yaml` or Git. Sandbox remains fictional-money testing even though the app server runs in production mode.
 5. The API runs `npm run db:migrate` as its pre-deploy command. The static site build receives `VITE_API_BASE_URL` and serves assets through Render's CDN.
 6. Register a workspace account on the deployed site. Use PayPal Sandbox buyer credentials for checkout tests.
 
@@ -161,7 +161,7 @@ Never treat a backup as verified until a restore has been tested. Keep a recover
 
 1. Select a failure scenario and run it in the simulator, or choose **Run full suite** to execute an unsafe baseline and repaired path for every supported scenario.
 2. Inspect the suite report, individual traces, checks, and AI/local diagnosis.
-3. Compare the unsafe baseline with each repaired simulation. The full suite uses the local simulator and does not call PayPal or Gemini.
+3. Compare the unsafe baseline with each repaired simulation. The full suite uses the local simulator and does not call PayPal or OpenRouter.
 4. Optionally create a $2 PayPal Sandbox order and approve it with a Sandbox buyer account; Sandbox uses fictional test funds and does not move real money. The API injects the selected negative-test response at capture, and the run passes only when PayPal returns that expected failure. Use the local simulator for a zero-payment demo.
 5. Watch the live activity panel update and confirm history persists after an app restart.
 6. On a public HTTPS deployment with a configured Sandbox webhook, inspect event linkage and duplicate delivery counts in the reconciliation panel.
